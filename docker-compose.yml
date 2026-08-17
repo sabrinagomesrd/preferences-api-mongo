@@ -1,0 +1,11 @@
+# Mongo local para a PoC — espelho do padrão CRM (mongo:7), sem Atlas.
+services:
+  mongo:
+    image: mongo:7.0
+    ports:
+      - "27017:27017"
+    volumes:
+      - preferences_mongo_data:/data/db
+
+volumes:
+  preferences_mongo_data:

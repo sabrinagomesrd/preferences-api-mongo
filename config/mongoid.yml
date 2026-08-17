@@ -1,0 +1,16 @@
+# PoC local: só development e test. Sem bloco production de propósito.
+development:
+  clients:
+    default:
+      uri: <%= ENV.fetch("MONGO_URI", "mongodb://127.0.0.1:27017/preferences_api_mongo_development") %>
+      options:
+        max_pool_size: 5
+        server_selection_timeout: 5
+
+test:
+  clients:
+    default:
+      uri: <%= ENV.fetch("MONGO_URI", "mongodb://127.0.0.1:27017/preferences_api_mongo_test") %>
+      options:
+        max_pool_size: 1
+        server_selection_timeout: 5

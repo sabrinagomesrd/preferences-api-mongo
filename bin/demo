@@ -1,0 +1,27 @@
+#!/usr/bin/env bash
+# Demo da jornada da Rosana — rode com o servidor em http://localhost:3002
+set -euo pipefail
+
+BASE="${BASE_URL:-http://localhost:3002}"
+ACCOUNT_HEADER=(-H "Platform-Account-Id: 42" -H "Content-Type: application/json")
+
+echo "== health =="
+curl -s "$BASE/health_check" | python3 -m json.tool
+
+echo
+echo "== raw layers (deltas gravados) =="
+curl -s "${ACCOUNT_HEADER[@]}" \
+  "$BASE/v1/preferences/raw?resource_origin=platform_object&resource_key=deal&surface=cartao&type=cartao_fields" \
+  | python3 -m json.tool
+
+echo
+echo "== resolved (system base + team + user) =="
+curl -s "${ACCOUNT_HEADER[@]}" \
+  "$BASE/v1/preferences/resolved?resource_origin=platform_object&resource_key=deal&surface=cartao&type=cartao_fields&team_ref=time_negociadores&user_ref=rosana&base_fields[]=titulo&base_fields[]=valor&base_fields[]=etapa" \
+  | python3 -m json.tool
+
+echo
+echo "== multi: filtros salvos =="
+curl -s "${ACCOUNT_HEADER[@]}" \
+  "$BASE/v1/preferences?resource_origin=platform_object&resource_key=contact&surface=listagem&type=saved_filter&scope=user&scope_ref=rosana" \
+  | python3 -m json.tool
