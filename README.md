@@ -1,9 +1,8 @@
 # preferences-api-mongo (POC)
 
-POC irmã da [`preferences-api`](../preferences-api) — **mesmo contrato HTTP e domínio**, store = **MongoDB via Mongoid**.
+POC irmã da `preferences-api` — **mesmo contrato HTTP e domínio**, store = **MongoDB via Mongoid**.
 
 > **Não é** serviço de produção. **Não fecha** ADR de persistência.
-> Baseline AR/SQLite permanece em `preferences-api` (sem Mongo misturado).
 
 ## Como o ActiveRecord saiu e o Mongoid entrou
 
@@ -11,14 +10,14 @@ Não basta um arquivo: o desvio é um conjunto.
 
 | Camada                  | O que mudou                                                                                           |
 | ----------------------- | ----------------------------------------------------------------------------------------------------- |
-| `Gemfile`               | `gem "mongoid"`; **sem** `sqlite3` / `pg` / Solid\*                                                   |
+| `Gemfile`               | `gem "mongoid"`; **sem** `sqlite3` / `pg` / `solid_cache` / `solid_queue`                             |
 | `config/application.rb` | **Não** carrega `active_record/railtie` (só Active Model, Active Job, Action Controller, Action View) |
 | `config/mongoid.yml`    | URI do Mongo (`MONGO_URI` ou default local)                                                           |
 | Model                   | `Preference` inclui `Mongoid::Document` + `field` / `index` (não herda `ApplicationRecord`)           |
 | Ausências               | sem `database.yml`, sem `db/migrate`, sem `ApplicationRecord`                                         |
 | Índices                 | `bin/rails db:create_indexes` (`lib/tasks/mongo.rake`) — **não** `db:migrate`                         |
 
-`mongoid.yml` configura _como_ conectar. O app usa Mongo porque a gem está no bundle, o railtie do AR está fora e o model é `Mongoid::Document`.
+`mongoid.yml` configura _como_ conectar. O app usa Mongo porque a gem está no bundle, o railtie do ActiveRecord está fora e o model é `Mongoid::Document`.
 
 Os `field :...` no model são o mapa Mongoid (tipos/defaults) — o Mongo em si continua sem schema rígido; isso é o contrato do app com o documento.
 
@@ -32,24 +31,20 @@ Os `field :...` no model são o mapa Mongoid (tipos/defaults) — o Mongo em si 
 
 ## Decisões deste incremento
 
-| Decisão                    | Escolha                                                                              | Por quê                                                                                              |
-| -------------------------- | ------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------- |
-| ODM                        | **Mongoid ~> 9** (não driver cru)                                                    | Padrão Rails na RD (CRM usa Mongoid); model + índices declarativos                                   |
-| ActiveRecord               | **Removido** deste app                                                               | Isolar atrito “Rails way sem AR”                                                                     |
-| Schema de identity         | Campos **flat** (iguais à migration PoC)                                             | Comparar 1:1 com Esboço A; aninhar resource/context é cosmético                                      |
-| Context vazio              | Sentinel `""` (não `null`/ausente)                                                   | `context` é opcional no contrato mas entra na identidade; sentinel normaliza a chave nos dois stores |
-| Unique singleton           | Índice unique + `partial_filter_expression: cardinality == singleton`                | Espelho do unique parcial PG; CRM **não** usa partial (só unique/sparse)                             |
-| Query `scope_ref IN (...)` | Mongoid: `.in(scope_ref: refs)` — `where(scope_ref: array)` **não** basta como no AR | Lição do smoke `/resolved`                                                                           |
-| `available_refs`           | **Não** embutido no documento                                                        | Fronteira Paulo §10                                                                                  |
-| Mongo local                | `docker compose` `mongo:7.0`                                                         | Mesma major do CRM local; sem Atlas na PoC                                                           |
-| Copiar do CRM              | URI via env `MONGO_URI`                                                              | Simples                                                                                              |
-| **Não** copiar do CRM      | `Mongoid::Instance`, Paranoia-as-MUST, Elasticsearch, CDC                            | Domínio/tenant CRM ≠ Preferências                                                                    |
+| Decisão                    | Escolha                                                                                        | Por quê                                                                                                                                                                                                                                                                                              |
+| -------------------------- | ---------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| ODM                        | **Mongoid ~> 9** (não driver cru)                                                              | Padrão Rails na RD (CRM usa Mongoid); model + índices declarativos                                                                                                                                                                                                                                   |
+| ActiveRecord               | **Removido** deste app                                                                         | Preferências no dia zero é Mongoid-only: o domínio não usa SQL, e manter ActiveRecord só puxaria `solid_cache`/`solid_queue` (sem requisito). Esta PoC valida o desvio do template Rails sem ActiveRecord.                                                                                           |
+| Schema de identity         | Campos **flat**                                                                                | Mesmos atributos de identidade no documento (`platform_account_id`, `resource_*`, `surface`, `scope`…) em vez de aninhar `resource`/`context` como subdocumentos — facilita comparar com o Esboço A (relacional) e com a PoC ActiveRecord; aninhar seria só organização do JSON, sem ganho de regra. |
+| Context vazio              | Sentinel `""` (não `null`/ausente)                                                             | `context` é opcional no contrato mas entra na identidade; sentinel normaliza a chave nos dois stores                                                                                                                                                                                                 |
+| Unique singleton           | Índice unique + `partial_filter_expression: cardinality == singleton`                          | Espelho do unique parcial PG; CRM **não** usa partial (só unique/sparse)                                                                                                                                                                                                                             |
+| Query `scope_ref IN (...)` | Mongoid: `.in(scope_ref: refs)` — `where(scope_ref: array)` **não** basta como no ActiveRecord | Lição do smoke `/resolved`                                                                                                                                                                                                                                                                           |
 
 ## O que foi criar / alterar / apagar
 
 ### Criar
 
-- `Gemfile` com `mongoid` (sem `sqlite3` / Solid\*)
+- `Gemfile` com `mongoid` (sem `sqlite3` / `solid_cache` / `solid_queue`)
 - `config/mongoid.yml`, `docker-compose.yml`
 - `app/models/preference.rb` (Mongoid::Document + índices)
 - `lib/tasks/mongo.rake` (`db:create_indexes`)
@@ -60,20 +55,13 @@ Os `field :...` no model são o mapa Mongoid (tipos/defaults) — o Mongo em si 
 - `config/application.rb` — sem `active_record/railtie`; módulo `PreferencesApiMongo`
 - Controllers singleton/multi/raw — APIs Mongoid (`where.first`, ordenação em Ruby)
 - `health` — `service: preferences-api-mongo`, `store: mongoid`
-- Environments — removidas configs ActiveRecord / Solid Cache/Queue
+- Environments — removidas configs ActiveRecord / `solid_cache` / `solid_queue`
 - Seeds — mesmos dados Rosana; `context_*` caem no sentinel
 
 ### Apagar (deste app)
 
 - `config/database.yml`, `db/migrate/*`, `app/models/application_record.rb`
-- Dependência de SQLite / Solid Cache / Solid Queue para o domínio Preferências
-- Bloco `production` em `mongoid.yml` (PoC só local)
-
-### Não fazer (de propósito)
-
-- Dual-write AR+Mongo (ver PoC `preferences-api-dual`)
-- Provisionar Atlas / Cloud SQL
-- Copiar constitution Mongoid do CRM
+- Dependência de SQLite / gems `solid_cache` e `solid_queue` (cache e fila do template Rails 8 via ActiveRecord — não usáveis com Mongoid-only)
 
 ## Subir local
 
@@ -102,20 +90,19 @@ O seed grava a jornada da Rosana (conta `42`: singleton team/user no cartão de 
 ## Ver no MongoDB Compass
 
 1. Subir o compose (`docker compose up -d`) se ainda não estiver no ar.
-2. Nova conexão: `mongodb://127.0.0.1:27017` (ou o alias que preferir).
-3. Database da app: **`preferences_api_mongo_development`**
-4. Collection: **`preferences`**
+2. Nova conexão: `mongodb://127.0.0.1:27017`.
+3. Collection: **`preferences`**
 
 O que aparece além disso:
 
 - `admin`, `config`, `local` — databases **de sistema** do Mongo (não criados pelo código da PoC).
-- `preferences_api_mongo_development` / `preferences` — criados na primeira escrita (seed, API ou `create_indexes`).
+- `preferences` — criados na primeira escrita (seed, API ou `create_indexes`).
 
 Cada documento tem `_id` (ObjectId do Mongo) e `uuid` (id de domínio da API). Expanda `payload` no Compass para ver o delta.
 
 ## Endpoints
 
-Mesmos da PoC AR. Header obrigatório: `Platform-Account-Id`.
+Mesmos da PoC ActiveRecord (`preferences-api`). Header obrigatório: `Platform-Account-Id`.
 
 | Método           | Caminho                     | Uso                         |
 | ---------------- | --------------------------- | --------------------------- |
@@ -134,19 +121,7 @@ Singleton = **no máximo um** desvio por identidade (conta + resource + surface 
 
 `POST /v1/preferences` fica para **multi** (filtros salvos, etc.), em que cada chamada **cria** uma instância nova (`uuid` novo, com `name`).
 
-Espelho da PoC AR / padrão `PUT`/`DELETE` de singleton do anexo de Apresentação. **Não** é ADR: o contrato oficial ainda pode escolher outro desenho HTTP; o que o domínio exige é a regra de um-por-identidade + upsert.
-
-## Sandbox de escrita (standby)
-
-UI em `public/sandbox.html` para registrar singleton e multi **ainda não** está neste repo. Plano e decisões ficam no vault Obsidian:
-
-`Contextos de Pesquisas/Sandbox PoC Preferências Mongo — standby.md`
-
-## Relação com o estudo
-
-- Vault: `Contextos de Pesquisas/Esboço — persistência da API de Preferências.md` (Esboço B + pesquisa CRM)
-- Discovery: GESOBJ-220
-- Referência RD Mongoid: `~/Developer/rd-station/rds-crm` (monólito Mongo-first — **não** o template Via A)
+Espelho da PoC ActiveRecord / padrão `PUT`/`DELETE` de singleton do anexo de Apresentação. **Não** é ADR: o contrato oficial ainda pode escolher outro desenho HTTP; o que o domínio exige é a regra de um-por-identidade + upsert.
 
 ## O que este incremento **não** responde
 
